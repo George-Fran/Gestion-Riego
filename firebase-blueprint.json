@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "IrrigationRecord": {
+      "title": "Registro de Riego",
+      "description": "Registro de lecturas de riego, clima y parámetros para el Fundo Monte Carmelo",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID único del registro"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Marca de tiempo legible del registro"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp de creación"
+        },
+        "fundo": {
+          "type": "string",
+          "description": "Nombre del fundo (ej. FUNDO MONTE CARMELO)"
+        },
+        "lote": {
+          "type": "string",
+          "description": "Nombre del lote (ej. LOTE 1)"
+        },
+        "cultivo": {
+          "type": "string",
+          "description": "Nombre del cultivo (ej. Arándano)"
+        },
+        "fechaRiego": {
+          "type": "string",
+          "description": "Fecha del riego en formato DD/MM/YYYY"
+        },
+        "observaciones": {
+          "type": "string",
+          "description": "Observaciones generales del monitoreo",
+          "maxLength": 2000
+        },
+        "lecturasDia": {
+          "type": "object",
+          "description": "Lecturas de pH, CE, drenaje y humedad del día"
+        },
+        "condicionesClimaticas": {
+          "type": "object",
+          "description": "Valores climáticos del día"
+        },
+        "parametrosRiego": {
+          "type": "object",
+          "description": "Parámetros de riego configurados"
+        }
+      },
+      "required": ["id", "fundo", "lote", "cultivo"]
+    }
+  },
+  "firestore": {
+    "/registros/{recordId}": {
+      "schema": "IrrigationRecord",
+      "description": "Colección global de registros de riego para el Fundo Monte Carmelo"
+    }
+  }
+}

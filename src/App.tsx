@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Header } from './components/Header';
 import { LecturasDia } from './components/LecturasDia';
 import { CondicionesClimaticas } from './components/CondicionesClimaticas';
@@ -13,6 +13,12 @@ import {
   SavedRecord,
 } from './types';
 import { exportRecordsToExcel, getCurrentFormattedDate } from './utils/exportExcel';
+import {
+  clearAllRecordsFromCloud,
+  deleteRecordFromCloud,
+  saveRecordToCloud,
+  subscribeToRecords,
+} from './firebase';
 
 const FUNDO_NAME = 'FUNDO MONTE CARMELO';
 const LOCAL_STORAGE_KEY = 'montecarmelo_riego_records_v1';
@@ -53,16 +59,8 @@ export default function App() {
   const [observaciones, setObservaciones] = useState<string>('');
   const [parametros, setParametros] = useState<ParametrosRiegoData>(getInitialParametros);
 
-  // Saved Records in SQLite + localStorage fallback
-  const [records, setRecords] = useState<SavedRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // fallback
-    }
-    return [];
-  });
+  // Saved Records state
+  const [records, setRecords] = useState<SavedRecord[]>([]);
 
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [toast, setToast] = useState<{
@@ -70,35 +68,19 @@ export default function App() {
     type: 'success' | 'info';
   } | null>(null);
 
-  // Fetch records from SQLite server API on load
-  const fetchRecordsFromSQLite = useCallback(async () => {
-    try {
-      const res = await fetch('/api/records');
-      const data = await res.json();
-      if (data.success && Array.isArray(data.records)) {
-        setRecords(data.records);
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data.records));
+  // Real-time synchronization with Firebase Firestore Cloud Database
+  useEffect(() => {
+    const unsubscribe = subscribeToRecords((cloudRecords) => {
+      setRecords(cloudRecords);
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cloudRecords));
+      } catch {
+        // fallback
       }
-    } catch {
-      // Keep local state if server API fails
-    }
+    });
+
+    return () => unsubscribe();
   }, []);
-
-  useEffect(() => {
-    fetchRecordsFromSQLite();
-    // Periodically poll for shared multi-device updates every 10s
-    const interval = setInterval(fetchRecordsFromSQLite, 10000);
-    return () => clearInterval(interval);
-  }, [fetchRecordsFromSQLite]);
-
-  // Sync to local storage
-  useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(records));
-    } catch {
-      // fallback
-    }
-  }, [records]);
 
   const handleLecturaChange = (
     field: keyof LecturasDiaData,
@@ -135,30 +117,29 @@ export default function App() {
       parametrosRiego: { ...parametros },
     };
 
-    const updated = [newRecord, ...records];
-    setRecords(updated);
-
-    // Save to server SQLite database
+    // Save directly to Firebase Firestore Cloud Database
     try {
-      await fetch('/api/records', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newRecord),
-      });
-    } catch (err) {
-      console.error('Error saving to server SQLite database:', err);
-    }
+      await saveRecordToCloud(newRecord);
 
-    if (autoExportExcel) {
-      exportRecordsToExcel([newRecord], `${FUNDO_NAME}_${selectedLote}_Registro`);
+      if (autoExportExcel) {
+        exportRecordsToExcel([newRecord], `${FUNDO_NAME}_${selectedLote}_Registro`);
+        setToast({
+          message: `¡Registro subido a la nube para ${selectedLote} y Excel descargado!`,
+          type: 'success',
+        });
+      } else {
+        setToast({
+          message: `¡Registro subido a la nube para ${selectedLote}! Disponible al instante en todos los dispositivos.`,
+          type: 'success',
+        });
+      }
+    } catch (err) {
+      console.error('Error uploading to Firebase cloud:', err);
+      // Fallback update local state
+      setRecords((prev) => [newRecord, ...prev]);
       setToast({
-        message: `¡Registro guardado en SQLite para ${selectedLote} y archivo Excel descargado!`,
-        type: 'success',
-      });
-    } else {
-      setToast({
-        message: `¡Registro guardado en la base de datos para ${selectedLote}! Accesible desde cualquier dispositivo.`,
-        type: 'success',
+        message: `Registro guardado localmente para ${selectedLote}.`,
+        type: 'info',
       });
     }
 
@@ -178,31 +159,31 @@ export default function App() {
   };
 
   const handleDeleteRecord = async (id: string) => {
-    setRecords((prev) => prev.filter((r) => r.id !== id));
     try {
-      await fetch(`/api/records/${id}`, { method: 'DELETE' });
-    } catch {
-      // ignore
+      await deleteRecordFromCloud(id);
+      setToast({
+        message: 'Registro eliminado permanentemente de la nube.',
+        type: 'info',
+      });
+    } catch (err) {
+      console.error('Error deleting from cloud:', err);
+      setRecords((prev) => prev.filter((r) => r.id !== id));
     }
-    setToast({
-      message: 'Registro eliminado del servidor.',
-      type: 'info',
-    });
     setTimeout(() => setToast(null), 3000);
   };
 
   const handleClearAllRecords = async () => {
-    if (window.confirm('¿Está seguro de vaciar todo el historial de la base de datos?')) {
-      setRecords([]);
+    if (window.confirm('¿Está seguro de vaciar todo el historial de la nube?')) {
       try {
-        await fetch('/api/records', { method: 'DELETE' });
-      } catch {
-        // ignore
+        await clearAllRecordsFromCloud(records);
+        setToast({
+          message: 'Base de datos en la nube vaciada.',
+          type: 'info',
+        });
+      } catch (err) {
+        console.error('Error clearing cloud database:', err);
+        setRecords([]);
       }
-      setToast({
-        message: 'Base de datos SQLite vaciada.',
-        type: 'info',
-      });
       setTimeout(() => setToast(null), 3000);
     }
   };
